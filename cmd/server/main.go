@@ -3,8 +3,9 @@ package main
 import (
 	"auth-system/internal/database"
 	"auth-system/internal/handlers"
+	"auth-system/internal/logger"
+	"auth-system/internal/middleware"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
@@ -13,9 +14,12 @@ import (
 )
 
 func main() {
+	// Initialize logger
+	logger := logger.NewLogger()
+
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found")
+		logger.Error("Warning: .env file not found")
 	}
 
 	// Build connection string from environment variables
@@ -31,23 +35,36 @@ func main() {
 	// Initialize database
 	db, err := database.InitDB(connectionString)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("Database initialization failed: %v", err)
+		return
 	}
 	defer db.Close()
 
 	// Initialize router
 	router := mux.NewRouter()
-
-	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(db)
 
-	// Register routes
+	// Public routes
 	router.HandleFunc("/register", authHandler.Register).Methods("POST")
 	router.HandleFunc("/login", authHandler.Login).Methods("POST")
+	router.HandleFunc("/logout", authHandler.Logout).Methods("POST")
+
+	// Protected routes
+	protected := router.PathPrefix("/api").Subrouter()
+	protected.Use(middleware.AuthMiddleware)
+	protected.HandleFunc("/profile", authHandler.ProtectedResource).Methods("GET")
+
+	// Add basic logging middleware
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logger.Info("Request: %s %s", r.Method, r.URL.Path)
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// Start server
-	log.Printf("Server starting on :8080")
+	logger.Info("Server starting on :8080")
 	if err := http.ListenAndServe(":8080", router); err != nil {
-		log.Fatal(err)
+		logger.Error("Server failed to start: %v", err)
 	}
 }

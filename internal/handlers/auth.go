@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"auth-system/internal/session"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -45,6 +46,9 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "User successfully registered",
+	})
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +86,50 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Here you would typically create a session or JWT token
-	// For now, just return success
+	// Create session using the shared store
+	session, _ := session.Store.Get(r, "session-name")
+	session.Values["authenticated"] = true
+	session.Values["user_id"] = user.ID
+	session.Save(r, w)
+
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Successfully logged in",
+	})
+}
+
+func (h *AuthHandler) ProtectedResource(w http.ResponseWriter, r *http.Request) {
+	session, _ := session.Store.Get(r, "session-name")
+	userID := session.Values["user_id"].(int)
+
+	var user struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	}
+
+	err := h.db.QueryRow(`
+        SELECT id, username, email 
+        FROM users 
+        WHERE id = $1`,
+		userID).Scan(&user.ID, &user.Username, &user.Email)
+
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(user)
+}
+
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	session, _ := session.Store.Get(r, "session-name")
+	session.Values["authenticated"] = false
+	session.Values["user_id"] = nil
+	session.Save(r, w)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Successfully logged out",
+	})
 }
